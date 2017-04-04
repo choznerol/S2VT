@@ -6,7 +6,8 @@ import pandas as pd
 import numpy as np
 import os
 import sys
-import ipdb
+## TODO: 暫時用不到，先commnad掉避免error
+#import ipdb
 import time
 import cv2
 from keras.preprocessing import sequence
@@ -26,8 +27,9 @@ class Video_Caption_Generator():
             self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
         #self.bemb = tf.Variable(tf.zeros([dim_hidden]), name='bemb')
 
-        self.lstm1 = tf.nn.rnn_cell.BasicLSTMCell(dim_hidden, state_is_tuple=False)
-        self.lstm2 = tf.nn.rnn_cell.BasicLSTMCell(dim_hidden, state_is_tuple=False)
+        ## TODO 原本的寫法已過時，以下才是tensorflow 1.0的寫法
+        self.lstm1 = tf.contrib.rnn.BasicLSTMCell(dim_hidden, state_is_tuple=False)
+        self.lstm2 = tf.contrib.rnn.BasicLSTMCell(dim_hidden, state_is_tuple=False)
 
         self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
         self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
@@ -65,7 +67,8 @@ class Video_Caption_Generator():
                 output1, state1 = self.lstm1(image_emb[:,i,:], state1)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2(tf.concat(1, [padding, output1]), state2)
+                ## TODO 不知為何，原本的code每個tf.concat()第一個參數都丟1，明明axis是第二個參數
+                output2, state2 = self.lstm2(tf.concat([padding, output1], 1), state2)
 
         ############################# Decoding Stage ######################################
         for i in range(0, self.n_caption_lstm_step): ## Phase 2 => only generate captions
@@ -81,15 +84,21 @@ class Video_Caption_Generator():
                 output1, state1 = self.lstm1(padding, state1)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2(tf.concat(1, [current_embed, output1]), state2)
+                ## TODO 同70行
+                output2, state2 = self.lstm2(tf.concat([current_embed, output1], 1), state2)
 
-            labels = tf.expand_dims(caption[:, i+1], 1)
-            indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-            concated = tf.concat(1, [indices, labels])
-            onehot_labels = tf.sparse_to_dense(concated, tf.pack([self.batch_size, self.n_words]), 1.0, 0.0)
+            labels = tf.expand_dims(caption[:, i+1], 1)                   ## shape=(50,1)
+            indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)  ## shape=(50,1)
+            concated = tf.concat([indices, labels], 1)                    ## shape=(50,2)
 
+            ## REVIEW shape=(50,11519)。 batch中每個字的ID（即11519中的其中一個數字為序號），如 12.0 代表 'cat'。
+            onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+
+            ## REVIEW shape=(50,11519) <float32> 。下層lstm最後吐出的詞向量。
             logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
-            cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logit_words, onehot_labels)
+
+            ## REVIEW onehot_labels是答案，logit_words是下層lstm吐出的預測結果，讓這兩者取cross_entropy
+            cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
             cross_entropy = cross_entropy * caption_mask[:,i]
             probs.append(logit_words)
 
@@ -97,7 +106,6 @@ class Video_Caption_Generator():
             loss = loss + current_loss
 
         return loss, video, video_mask, caption, caption_mask, probs
-
 
     def build_generator(self):
         video = tf.placeholder(tf.float32, [1, self.n_video_lstm_step, self.dim_image])
@@ -124,7 +132,8 @@ class Video_Caption_Generator():
                 output1, state1 = self.lstm1(image_emb[:, i, :], state1)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2(tf.concat(1, [padding, output1]), state2)
+                ##TODO 同70行
+                output2, state2 = self.lstm2(tf.concat([padding, output1], 1), state2)
 
         for i in range(0, self.n_caption_lstm_step):
             tf.get_variable_scope().reuse_variables()
@@ -137,7 +146,8 @@ class Video_Caption_Generator():
                 output1, state1 = self.lstm1(padding, state1)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2(tf.concat(1, [current_embed, output1]), state2)
+                ##TODO 同70行
+                output2, state2 = self.lstm2(tf.concat([current_embed, output1], 1), state2)
 
             logit_words = tf.nn.xw_plus_b( output2, self.embed_word_W, self.embed_word_b)
             max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -156,10 +166,11 @@ class Video_Caption_Generator():
 #=====================================================================================
 # Global Parameters
 #=====================================================================================
-video_path = '/home/chenxp/data/msvd'
+##TODO 更新路徑，請自己檢查路徑是否正確～
+video_path = '/home/ubuntu/shared/MLDS/hw2/datasets/MLDS_hw2_data/training_data/video/'
 
-video_train_feat_path = './rgb_train_features'
-video_test_feat_path = './rgb_test_features'
+video_train_feat_path = '/home/ubuntu/shared/MLDS/hw2/datasets/MLDS_hw2_data/training_data/feat'
+video_test_feat_path = '/home/ubuntu/shared/MLDS/hw2/datasets/MLDS_hw2_data/testing_data/feat'
 
 video_train_data_path = './data/video_corpus.csv'
 video_test_data_path = './data/video_corpus.csv'
@@ -188,7 +199,7 @@ def get_video_train_data(video_data_path, video_feat_path):
     video_data['video_path'] = video_data['video_path'].map(lambda x: os.path.join(video_feat_path, x))
     video_data = video_data[video_data['video_path'].map(lambda x: os.path.exists( x ))]
     video_data = video_data[video_data['Description'].map(lambda x: isinstance(x, str))]
-    
+
     unique_filenames = sorted(video_data['video_path'].unique())
     train_data = video_data[video_data['video_path'].map(lambda x: x in unique_filenames)]
     return train_data
@@ -262,26 +273,29 @@ def train():
     captions = map(lambda x: x.replace('!', ''), captions)
     captions = map(lambda x: x.replace('\\', ''), captions)
     captions = map(lambda x: x.replace('/', ''), captions)
+    ##TODO 排除連續多個空格的情形
+    captions = map(lambda x: x.replace('   ', ' '), captions)
+    captions = map(lambda x: x.replace('  ', ' '), captions)
 
     wordtoix, ixtoword, bias_init_vector = preProBuildWordVocab(captions, word_count_threshold=0)
-    
+
     np.save("./data/wordtoix", wordtoix)
     np.save('./data/ixtoword', ixtoword)
     np.save("./data/bias_init_vector", bias_init_vector)
 
     model = Video_Caption_Generator(
-            dim_image=dim_image,
-            n_words=len(wordtoix),
-            dim_hidden=dim_hidden,
-            batch_size=batch_size,
-            n_lstm_steps=n_frame_step,
-            n_video_lstm_step=n_video_lstm_step,
-            n_caption_lstm_step=n_caption_lstm_step,
-            bias_init_vector=bias_init_vector)
+            dim_image=dim_image,                      # {int} 4096
+            n_words=len(wordtoix),                    # {dict} 11519 | {'':4, 'raining':5,..., 'hardboiled':11514}
+            dim_hidden=dim_hidden,                    # {int} 1000
+            batch_size=batch_size,                    # {int} 50
+            n_lstm_steps=n_frame_step,                # {int} 80
+            n_video_lstm_step=n_video_lstm_step,      # {int} 80
+            n_caption_lstm_step=n_caption_lstm_step,  # {int} 20
+            bias_init_vector=bias_init_vector)        # {ndarray} 11519 | [-0.113853, -0.113853... ]
 
     tf_loss, tf_video, tf_video_mask, tf_caption, tf_caption_mask, tf_probs = model.build_model()
     sess = tf.InteractiveSession()
-    
+
     # my tensorflow version is 0.12.1, I write the saver with version 1.0
     saver = tf.train.Saver(max_to_keep=100, write_version=1)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(tf_loss)
@@ -447,3 +461,5 @@ def test(model_path='./models/model-100'):
         test_output_txt_fd.write(video_feat_path + '\n')
         test_output_txt_fd.write(generated_sentence + '\n\n')
 
+## TODO 讓物件導向的這支程式可以直接跑，建議在第行加break point即可直接跑、開始debug
+train()
